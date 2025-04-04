@@ -12,30 +12,43 @@ class DDPM():
         self.n = n
         self.betas = torch.linspace(0, 0.02, n+1) 
         self.alphas = 1-self.betas
-        self.alpha_bars = torch.cumprod(self.alphas)
+        self.alpha_bars = torch.cumprod(self.alphas, dim=0)
+        self.sigmas = torch.sqrt(self.betas)
         self.net = net
         self.input_shape = input_shape
 
+    def embed_time(self, X, t):
+        assert len(X.shape) == 2
+        t_normalized = (2*t-self.n)/self.n
+        input = torch.cat((X, t_normalized*torch.ones((X.shape[0], 1))), dim=1)
+        return input
+
+
     def train(self, loader, n_epochs):
-        optimizer = AdamW(self.net.parameters)
+        optimizer = AdamW(self.net.parameters())
         for e in range(n_epochs):
+            lossi = []
             for batch in loader:
                 X = batch[0] # (batch_size, ...)
                 t = np.random.randint(1, self.n+1)
-                noise = torch.randn_like(X[0]) 
+                noise = torch.randn_like(X) 
                 X_noised = np.sqrt(self.alpha_bars[t])*X + \
                     np.sqrt(1-self.alpha_bars[t])*noise
-                out = self.net(X_noised, t)
-                assert out.shape == noise.shape
+                input = self.embed_time(X_noised, t)
+                out = self.net(input)
+                assert out.shape == noise.shape, f"{out.shape = }, {noise.shape = }"
                 loss = torch.mean((out - noise)**2)
                 optimizer.zero_grad()
                 loss.backward()
                 optimizer.step()
+                lossi.append(loss.item())
+            print(f"epoch {e}: mean loss = {np.mean(lossi)}")
 
-    def sample(self):
-        x = torch.randn(self.input_shape)
+    def sample(self, n_samples):
+        x = torch.randn((n_samples,) + self.input_shape)
         for t in range(self.n, 0, -1):
-            noise = torch.randn(self.input_shape)
-            noise_pred = self.net(x, t) * self.betas[t]/np.sqrt(1-self.alpha_bars[t])
-            x = (x - noise_pred)/np.sqrt(self.alpha[t]) + self.sigmas[t] * noise
+            noise = torch.randn_like(x)
+            input = self.embed_time(x, t)
+            noise_pred = self.net(input) * self.betas[t]/np.sqrt(1-self.alpha_bars[t])
+            x = (x - noise_pred)/np.sqrt(self.alphas[t]) + self.sigmas[t] * noise
         return x
