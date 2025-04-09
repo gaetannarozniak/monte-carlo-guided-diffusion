@@ -18,12 +18,6 @@ class DDPM():
         self.net = net
         self.input_shape = input_shape
 
-    def embed_time(self, X, t):
-        assert len(X.shape) == 2
-        t_normalized = (2*t-self.n)/self.n
-        input = torch.cat((X, t_normalized), dim=1)
-        return input
-
 
     def train(self, loader, n_epochs):
         epoch_loss = []
@@ -36,8 +30,7 @@ class DDPM():
                 noise = torch.randn_like(X) 
                 X_noised = torch.sqrt(self.alpha_bars[t])*X + \
                     torch.sqrt(1-self.alpha_bars[t])*noise
-                input = self.embed_time(X_noised, t)
-                out = self.net(input)
+                out = self.net(X_noised, t)
                 assert out.shape == noise.shape, f"{out.shape = }, {noise.shape = }"
                 loss = torch.mean((out - noise)**2)
                 optimizer.zero_grad()
@@ -48,11 +41,33 @@ class DDPM():
             epoch_loss.append(np.mean(lossi))
         plt.plot(epoch_loss)
 
-    def sample(self, n_samples, eta=1):
+    def sample(self, n_samples):
         x = torch.randn((n_samples,) + self.input_shape)
         for t in range(self.n, 0, -1):
-            noise = eta*torch.randn_like(x)
-            input = self.embed_time(x, t*torch.ones(x.shape[0], 1))
-            noise_pred = self.net(input) * self.betas[t]/torch.sqrt(1-self.alpha_bars[t])
+            noise = torch.randn_like(x)
+            timesteps = torch.full((n_samples, 1), t)
+            noise_pred = self.net(x, timesteps) * self.betas[t]/torch.sqrt(1-self.alpha_bars[t])
             x = (x - noise_pred)/torch.sqrt(self.alphas[t]) + self.sigmas[t] * noise
         return x
+    
+    def sample_evolution(self, n_samples):
+        x = torch.randn((n_samples,) + self.input_shape)
+        list_samples = [x]
+        for t in range(self.n, 0, -1):
+            noise = torch.randn_like(x)
+            timesteps = torch.full((n_samples, 1), t)
+            noise_pred = self.net(x, timesteps) * self.betas[t]/torch.sqrt(1-self.alpha_bars[t])
+            x = (x - noise_pred)/torch.sqrt(self.alphas[t]) + self.sigmas[t] * noise
+            list_samples.append(x)
+        list_samples = torch.stack(list_samples)
+        return list_samples
+    
+    def predict(self, particles, t):
+        noise = (((1 - self.alpha_bars[t]) / (1 - self.alpha_bars[t+1])) * (1 - self.alpha_bars[t+1] / self.alpha_bars[t]))**.5
+        coeff_sample = (self.alpha_bars[t] / self.alpha_bars[t+1])**.5
+        coeff_score = ((1 - self.alpha_bars[t] - noise**2)**.5) - coeff_sample * ((1 - self.alpha_bars[t+1])**.5)
+
+        timesteps = torch.full((particles.shape[0], 1), t)
+        epsilon_predicted = self.net(particles, timesteps)
+        mean = coeff_sample * particles + coeff_score * epsilon_predicted
+        return mean, noise
