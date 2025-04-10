@@ -8,3 +8,4 @@ def plot_image(tensor_image):
     tensor_image = tensor_image.permute(1, 2, 0)
     np_image = tensor_image.detach().cpu().numpy()
     plt.imshow(np_image)
+    plt.show()
